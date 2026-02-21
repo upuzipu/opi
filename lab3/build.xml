@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="lab3" default="build" xmlns:ivy="antlib:org.apache.ivy.ant">
+    <property file="build.properties"/>
+
+    <path id="classpath.project">
+        <fileset dir="${lib}" includes="**/*.jar"/>
+    </path>
+
+    <taskdef resource="net/sf/antcontrib/antlib.xml">
+        <classpath>
+            <fileset dir="${lib}" includes="ant-contrib*.jar"/>
+        </classpath>
+    </taskdef>
+
+    <!-- === Resolve dependencies (Ivy) === -->
+    <target name="resolve" description="Загрузка зависимостей через Ivy">
+        <mkdir dir="${lib}"/>
+        <ivy:retrieve pattern="lib/[artifact].[ext]" conf="jars"/>
+    </target>
+
+    <!-- === compile: компиляция исходных кодов === -->
+    <target name="compile" depends="resolve" description="Компиляция исходных кодов проекта">
+        <mkdir dir="${compiled.classes}"/>
+        <mkdir dir="${compiled.tests}"/>
+        <copy todir="${compiled.classes}" includeEmptyDirs="false">
+            <fileset dir="${main.resources}"/>
+        </copy>
+
+        <javac destdir="${compiled.classes}" includeantruntime="false" srcdir="${main.java}">
+            <classpath refid="classpath.project"/>
+        </javac>
+
+        <javac destdir="${compiled.tests}" includeantruntime="false" srcdir="${tests}">
+            <classpath>
+                <pathelement location="${compiled.classes}"/>
+                <path refid="classpath.project"/>
+            </classpath>
+        </javac>
+    </target>
+
+    <!-- === build: компиляция + упаковка в jar === -->
+    <target name="build" depends="compile" description="Компиляция и упаковка в исполняемый jar-архив">
+        <mkdir dir="${project.basedir}/out"/>
+        <jar destfile="${destination.jar}" basedir="${compiled.classes}">
+            <manifest>
+                <attribute name="Implementation-Version" value="${version}"/>
+                <attribute name="Main-Class" value="${main.class}"/>
+            </manifest>
+        </jar>
+    </target>
+
+    <!-- === clean: удаление скомпилированных и временных файлов === -->
+    <target name="clean" description="Удаление скомпилированных классов и временных файлов">
+        <delete dir="${compiled}"/>
+        <delete dir="tmp"/>
+        <delete dir="${native2ascii.dir}" quiet="true"/>
+        <delete dir="${alt.src.dir}" quiet="true"/>
+    </target>
+
+    <!-- === test: запуск JUnit-тестов (после build) === -->
+    <target name="test" depends="build" description="Запуск JUnit-тестов проекта">
+        <mkdir dir="${report}"/>
+        <junitlauncher printsummary="true" haltonfailure="true">
+            <classpath>
+                <pathelement location="${compiled.tests}"/>
+                <pathelement location="${compiled.classes}"/>
+                <path refid="classpath.project"/>
+            </classpath>
+            <testclasses outputdir="${report}">
+                <fileset dir="${compiled.tests}"/>
+            </testclasses>
+            <listener type="legacy-xml" sendSysErr="true" sendSysOut="true"/>
+        </junitlauncher>
+    </target>
+
+    <!-- === music: воспроизведение музыки после build === -->
+    <target name="music" depends="build" description="Воспроизведение музыки по завершении сборки">
+        <available file="${music.file}" property="music.exists"/>
+        <antcall target="music-play"/>
+    </target>
+    <target name="music-play" if="music.exists">
+        <exec executable="afplay" os="Mac OS X" failonerror="false">
+            <arg value="${music.file}"/>
+        </exec>
+        <exec executable="aplay" os="Linux" failonerror="false">
+            <arg value="${music.file}"/>
+        </exec>
+        <exec executable="cmd" osfamily="windows" failonerror="false">
+            <arg value="/c"/>
+            <arg value="start"/>
+            <arg value="/min"/>
+            <arg value="wmplayer"/>
+            <arg value="${music.file}"/>
+        </exec>
+    </target>
+
+    <!-- === scp: копирование jar на сервер по завершении build === -->
+    <target name="scp" depends="build" description="Перемещение jar на сервер по SCP">
+        <exec executable="scp" failonerror="true">
+            <arg value="-P"/>
+            <arg value="${scp.port}"/>
+            <arg value="${destination.jar}"/>
+            <arg value="${scp.host}:${scp.remote.dir}/"/>
+        </exec>
+    </target>
+
+    <!-- === native2ascii: преобразование файлов локализации === -->
+    <target name="native2ascii" description="Преобразование native2ascii для файлов локализации">
+        <mkdir dir="${native2ascii.dir}"/>
+        <native2ascii src="${main.resources}" dest="${native2ascii.dir}" encoding="UTF-8" includes="**/*.properties"/>
+    </target>
+
+    <!-- === doc: MD5/SHA-1 в MANIFEST + генерация Javadoc === -->
+    <target name="doc" depends="build" description="MD5/SHA-1 в MANIFEST, генерация Javadoc">
+        <checksum file="${destination.jar}" property="project.sha1" algorithm="SHA-1"/>
+        <checksum file="${destination.jar}" property="project.md5" algorithm="MD5"/>
+
+        <delete dir="${doc}" quiet="true"/>
+        <mkdir dir="${doc}"/>
+
+        <javadoc destdir="${doc}" encoding="UTF-8" docencoding="UTF-8" charset="UTF-8">
+            <classpath refid="classpath.project"/>
+            <packageset dir="${main.java}"/>
+        </javadoc>
+
+        <jar destfile="${destination.jar}" basedir="${compiled.classes}" update="true">
+            <manifest>
+                <attribute name="Implementation-Version" value="${version}"/>
+                <attribute name="Main-Class" value="${main.class}"/>
+                <attribute name="SHA-1" value="${project.sha1}"/>
+                <attribute name="MD5" value="${project.md5}"/>
+            </manifest>
+        </jar>
+        <jar destfile="${doc}/javadoc.jar" basedir="${doc}">
+            <manifest>
+                <attribute name="SHA-1" value="${project.sha1}"/>
+                <attribute name="MD5" value="${project.md5}"/>
+            </manifest>
+        </jar>
+    </target>
+
+    <!-- === xml: валидация всех XML-файлов === -->
+    <target name="xml" description="Валидация всех XML-файлов в проекте">
+        <xmlvalidate failonerror="false" lenient="true">
+            <fileset dir="${project.basedir}" includes="**/*.xml" excludes="**/report/**"/>
+        </xmlvalidate>
+    </target>
+
+    <!-- === env: сборка и запуск в альтернативном окружении === -->
+    <target name="env" depends="build" description="Сборка и запуск в альтернативном окружении">
+        <property name="env.java.executable" value="java"/>
+        <path id="env.executable.path">
+            <pathelement path="${env.java.home}/bin"/>
+        </path>
+        <java classname="${main.class}" fork="true" jvm="${env.java.executable}" jvmargs="${env.jvm.args}">
+            <classpath>
+                <pathelement location="${destination.jar}"/>
+                <path refid="classpath.project"/>
+            </classpath>
+        </java>
+    </target>
+
+    <!-- === history: при ошибке compile - загрузка предыдущей SVN-ревизии === -->
+    <target name="history" description="При ошибке compile загрузить предыдущую ревизию из SVN">
+        <trycatch property="compile.error" reference="compile.error.ref">
+            <try>
+                <antcall target="compile"/>
+            </try>
+            <catch>
+                <exec executable="svn" outputproperty="svn.current.rev" failonerror="true">
+                    <arg value="info"/>
+                    <arg value="--show-item"/>
+                    <arg value="revision"/>
+                </exec>
+                <condition property="history.is.first">
+                    <equals arg1="${svn.current.rev}" arg2="1"/>
+                </condition>
+                <antcall target="history-save-diff"/>
+                <antcall target="history-checkout-prev"/>
+            </catch>
+        </trycatch>
+    </target>
+    <target name="history-save-diff" if="history.is.first">
+        <exec executable="svn" outputproperty="svn.diff.output">
+            <arg value="diff"/>
+            <arg value="-r"/>
+            <arg value="1"/>
+        </exec>
+        <echo file="history-diff.txt" message="${svn.diff.output}"/>
+    </target>
+    <target name="history-checkout-prev" unless="history.is.first">
+        <exec executable="svn" failonerror="true">
+            <arg value="update"/>
+            <arg value="-r"/>
+            <arg value="PREV"/>
+        </exec>
+        <antcall target="history"/>
+    </target>
+
+    <!-- === alt: альтернативная версия с заменой имён, упаковка в jar === -->
+    <target name="alt" depends="build" description="Альтернативная версия с заменой имён">
+        <delete dir="${alt.src.dir}" quiet="true"/>
+        <copy todir="${alt.src.dir}">
+            <fileset dir="${main.java}"/>
+        </copy>
+        <replaceregexp match="Hit" replace="Point" byline="false" dir="${alt.src.dir}"/>
+        <replaceregexp match="checkHit" replace="checkPoint" byline="false" dir="${alt.src.dir}"/>
+        <replaceregexp match="\bR\b" replace="radius" byline="false" dir="${alt.src.dir}"/>
+
+        <mkdir dir="${compiled}/alt-classes"/>
+        <javac destdir="${compiled}/alt-classes" includeantruntime="false" srcdir="${alt.src.dir}">
+            <classpath refid="classpath.project"/>
+        </javac>
+        <jar destfile="${alt.destination.jar}" basedir="${compiled}/alt-classes">
+            <manifest>
+                <attribute name="Implementation-Version" value="${version}-alt"/>
+                <attribute name="Main-Class" value="beans.HandlerBean"/>
+            </manifest>
+        </jar>
+    </target>
+
+    <!-- === report: сохранение JUnit XML, добавление в git, commit === -->
+    <target name="report" depends="test" description="Сохранение JUnit XML, git add и commit">
+        <junitreport todir="${report}">
+            <fileset dir="${report}">
+                <include name="TEST-*.xml"/>
+            </fileset>
+            <report todir="${report}/html"/>
+        </junitreport>
+        <exec executable="git" failonerror="false">
+            <arg value="add"/>
+            <arg value="${report}/TEST-*.xml"/>
+        </exec>
+        <exec executable="git" failonerror="false">
+            <arg value="commit"/>
+            <arg value="-m"/>
+            <arg value="JUnit report"/>
+        </exec>
+    </target>
+
+    <!-- === diff: SVN commit если изменения не касаются исключённых классов === -->
+    <target name="diff" description="SVN commit если изменения не в указанных классах">
+        <exec executable="svn" outputproperty="svn.status.output" failonerror="false">
+            <arg value="status"/>
+        </exec>
+        <condition property="diff.excluded.found">
+            <or>
+                <contains string="${svn.status.output}" substring="HandlerBean"/>
+                <contains string="${svn.status.output}" substring="ClockBean"/>
+            </or>
+        </condition>
+        <antcall target="diff-commit"/>
+    </target>
+    <target name="diff-commit" unless="diff.excluded.found">
+        <exec executable="svn" failonerror="false">
+            <arg value="add"/>
+            <arg value="--force"/>
+            <arg value="."/>
+        </exec>
+        <exec executable="svn" failonerror="false">
+            <arg value="commit"/>
+            <arg value="-m"/>
+            <arg value="Auto commit from diff target"/>
+        </exec>
+    </target>
+
+    <!-- === team: 2 предыдущие SVN-ревизии, сборка, zip === -->
+    <target name="team" description="Получение 2 предыдущих SVN-ревизий, сборка, упаковка в zip">
+        <mkdir dir="team"/>
+        <exec executable="svn" outputproperty="svn.head.rev">
+            <arg value="info"/>
+            <arg value="--show-item"/>
+            <arg value="revision"/>
+        </exec>
+        <exec executable="svn" failonerror="true">
+            <arg value="update"/>
+            <arg value="-r"/>
+            <arg value="PREV"/>
+        </exec>
+        <antcall target="build">
+            <param name="destination.jar" value="team/lab3-prev1.jar"/>
+        </antcall>
+        <exec executable="svn" failonerror="true">
+            <arg value="update"/>
+            <arg value="-r"/>
+            <arg value="PREV"/>
+        </exec>
+        <antcall target="build">
+            <param name="destination.jar" value="team/lab3-prev2.jar"/>
+        </antcall>
+        <exec executable="svn" failonerror="true">
+            <arg value="update"/>
+            <arg value="-r"/>
+            <arg value="HEAD"/>
+        </exec>
+        <zip destfile="team/team-versions.zip" basedir="team" includes="*.jar"/>
+    </target>
+</project>
